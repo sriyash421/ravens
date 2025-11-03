@@ -1,1 +1,10 @@
 /venv/
+*.hdf5
+*videos
+outputs/
+wandb/
+.ipynb_checkpoints/
+__pycache__/
+place-red-in-green-train*/
+*egg-info/
+slurm_logs

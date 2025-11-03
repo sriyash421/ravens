@@ -135,3 +135,15 @@ The MDP formulation for each task uses transitions with the following structure:
 **Rewards:** total sum of rewards for a successful episode should be =1.
 
 **Info:** 6D poses, sizes, and colors of objects.
+
+
+
+## Sriyash Commands
+
+
+
+### Generate data
+
+```
+python ravens/parallel_demos.py --assets_root=./ravens/environments/assets/ --task=place-red-in-green  --mode=train --n=1000 --continuous --steps_per_seg 10 --num_workers 100 --noise 0.001
+```

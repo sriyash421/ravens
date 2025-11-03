@@ -174,12 +174,19 @@ class Task():
         return
 
       # Get picking pose.
-      pick_prob = np.float32(pick_mask)
-      pick_pix = utils.sample_distribution(pick_prob)
-      # For "deterministic" demonstrations on insertion-easy, use this:
-      # pick_pix = (160,80)
-      pick_pos = utils.pix_to_xyz(pick_pix, hmap,
-                                  self.bounds, self.pix_size)
+      # pick_prob = np.float32(pick_mask)
+      # pick_pix = utils.sample_distribution(pick_prob)
+      # # For "deterministic" demonstrations on insertion-easy, use this:
+      # # pick_pix = (160,80)
+      # pick_pos = utils.pix_to_xyz(pick_pix, hmap,
+      #                             self.bounds, self.pix_size)
+      # 
+      pick_i = np.random.choice(order)
+      pick_pos = p.getBasePositionAndOrientation(objs[pick_i][0])[0]
+
+      random_x = np.random.uniform(-0.01, 0.01)
+      random_y = np.random.uniform(-0.01, 0.01)
+      pick_pos = (pick_pos[0] + random_x, pick_pos[1] + random_y, pick_pos[2])
       pick_pose = (np.asarray(pick_pos), np.asarray((0, 0, 0, 1)))
 
       # Get placing pose.

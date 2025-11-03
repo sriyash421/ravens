@@ -23,8 +23,10 @@ class RealSenseD415():
   """Default configuration with 3 RealSense RGB-D cameras."""
 
   # Mimic RealSense D415 RGB-D camera parameters.
-  image_size = (480, 640)
-  intrinsics = (450., 0, 320., 0, 450., 240., 0, 0, 1)
+  # image_size = (480, 640)
+  # intrinsics = (450., 0, 320., 0, 450., 240., 0, 0, 1)
+  image_size = (224, 224)
+  intrinsics = (170, 170, 112, 112)
 
   # Set default camera poses.
   front_position = (1., 0, 0.75)
@@ -45,21 +47,22 @@ class RealSenseD415():
       'rotation': front_rotation,
       'zrange': (0.01, 10.),
       'noise': False
-  }, {
-      'image_size': image_size,
-      'intrinsics': intrinsics,
-      'position': left_position,
-      'rotation': left_rotation,
-      'zrange': (0.01, 10.),
-      'noise': False
-  }, {
-      'image_size': image_size,
-      'intrinsics': intrinsics,
-      'position': right_position,
-      'rotation': right_rotation,
-      'zrange': (0.01, 10.),
-      'noise': False
-  }]
+    }]
+#   , {
+#       'image_size': image_size,
+#       'intrinsics': intrinsics,
+#       'position': left_position,
+#       'rotation': left_rotation,
+#       'zrange': (0.01, 10.),
+#       'noise': False
+#   }, {
+#       'image_size': image_size,
+#       'intrinsics': intrinsics,
+#       'position': right_position,
+#       'rotation': right_rotation,
+#       'zrange': (0.01, 10.),
+#       'noise': False
+#   }]
 
 
 class Oracle():

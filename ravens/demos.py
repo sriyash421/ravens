@@ -51,6 +51,7 @@ def main(unused_argv):
       hz=480)
   task = tasks.names[FLAGS.task](continuous=FLAGS.continuous)
   task.mode = FLAGS.mode
+  env.set_task(task)
 
   # Initialize scripted oracle agent and dataset.
   agent = task.oracle(env, steps_per_seg=FLAGS.steps_per_seg)
@@ -69,15 +70,17 @@ def main(unused_argv):
   # Collect training data from oracle demonstrations.
   while dataset.n_episodes < FLAGS.n:
     print(f'Oracle demonstration: {dataset.n_episodes + 1}/{FLAGS.n}')
+    breakpoint()
     episode, total_reward = [], 0
     seed += 2
     np.random.seed(seed)
     env.set_task(task)
     obs = env.reset()
-    info = None
+    info = {}
     reward = 0
     for _ in range(max_steps):
       act = agent.act(obs, info)
+      info["ee_pose"] = p.getLinkState(env.ur5, env.ee_tip)  # store 6-dof ee pose
       episode.append((obs, act, reward, info))
       obs, reward, done, info = env.step(act)
       total_reward += reward

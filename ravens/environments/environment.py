@@ -74,6 +74,27 @@ class Environment(gym.Env):
 
     self.assets_root = assets_root
 
+    # --- Ensure all fixed cams share one size; use that for wrist cam too ---
+    base_h, base_w = self.agent_cams[0]['image_size']
+    base_fx = self.agent_cams[0]['intrinsics'][0]
+    for cfg in self.agent_cams[1:]:
+      assert tuple(cfg['image_size']) == (base_h, base_w), \
+        f"All fixed cameras must share the same size; found {cfg['image_size']} vs {(base_h, base_w)}."
+
+    # --- Wrist camera config (mounted near EE tip, looks down toward table) ---
+    # We match resolution and focal length to fixed cams so dataset stacking works.
+    self.wrist_cam = {
+        'image_size': (base_h, base_w),
+        'intrinsics': (float(base_fx)*1.5, float(base_fx)*1.5, base_w / 2.0, base_h / 2.0),  # fx, fy, cx, cy
+        'zrange': (0.01, 2.0),
+        'noise': False,
+        # Pose and axes in EE frame:
+        'ee_rel_pos': (0.0, 0.025, 0.05),   # 10 cm out along EE Z
+        'ee_look_dir': (0.0, 0.0, -1.0),  # look "down" to table
+        'ee_up_dir':   (0.0, 1.0,  0.0),
+    }
+
+    # Build observation space: existing fixed cams + 1 wrist cam appended.
     color_tuple = [
         gym.spaces.Box(0, 255, config['image_size'] + (3,), dtype=np.uint8)
         for config in self.agent_cams
@@ -82,10 +103,15 @@ class Environment(gym.Env):
         gym.spaces.Box(0.0, 20.0, config['image_size'], dtype=np.float32)
         for config in self.agent_cams
     ]
+    # Add wrist camera spaces (same shape as base).
+    color_tuple.append(gym.spaces.Box(0, 255, (base_h, base_w, 3), dtype=np.uint8))
+    depth_tuple.append(gym.spaces.Box(0.0, 20.0, (base_h, base_w), dtype=np.float32))
+
     self.observation_space = gym.spaces.Dict({
         'color': gym.spaces.Tuple(color_tuple),
         'depth': gym.spaces.Tuple(depth_tuple),
     })
+
     self.position_bounds = gym.spaces.Box(
         low=np.array([0.25, -0.5, 0.], dtype=np.float32),
         high=np.array([0.75, 0.5, 0.28], dtype=np.float32),
@@ -148,6 +174,17 @@ class Environment(gym.Env):
 
     if task:
       self.set_task(task)
+
+  # ---------------- Wrist camera helpers ----------------
+  @staticmethod
+  def _rotate_vec_by_quat(q, v):
+    """Rotate vector v (3,) by quaternion q -> (3,)."""
+    R = np.array(p.getMatrixFromQuaternion(q)).reshape(3, 3)
+    return (R @ np.asarray(v).reshape(3,))
+
+  @staticmethod
+  def _add(a, b):
+    return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
 
   @property
   def is_static(self):
@@ -322,16 +359,60 @@ class Environment(gym.Env):
 
     return color, depth, segm
 
+  def render_wrist_camera(self):
+    """Render RGB-D image from a camera rigidly attached to the EE tip."""
+    cfg = self.wrist_cam
+    img_h, img_w = cfg['image_size']
+    fx = cfg['intrinsics'][0]
+    znear, zfar = cfg['zrange']
+
+    # EE world pose.
+    link_state = p.getLinkState(self.ur5, self.ee_tip, computeForwardKinematics=True)
+    ee_pos, ee_quat = link_state[0], link_state[1]
+
+    # Camera position in world = EE_pos + R(EE)*ee_rel_pos
+    cam_pos = self._add(ee_pos, self._rotate_vec_by_quat(ee_quat, cfg['ee_rel_pos']))
+
+    # World look/up.
+    look_dir_world = self._rotate_vec_by_quat(ee_quat, cfg['ee_look_dir'])
+    up_dir_world   = self._rotate_vec_by_quat(ee_quat, cfg['ee_up_dir'])
+    look_at = (cam_pos[0] + look_dir_world[0],
+               cam_pos[1] + look_dir_world[1],
+               cam_pos[2] + look_dir_world[2])
+
+    # Matrices.
+    viewm = p.computeViewMatrix(cam_pos, look_at, up_dir_world)
+    # Vertical FOV from fx, consistent with render_camera().
+    fovv = (img_h / 2.0) / fx
+    fovv = 180.0 * np.arctan(fovv) * 2.0 / np.pi
+    aspect_ratio = float(img_w) / float(img_h)
+    projm = p.computeProjectionMatrixFOV(fovv, aspect_ratio, znear, zfar)
+
+    _, _, color, depth, segm = p.getCameraImage(
+        width=img_w,
+        height=img_h,
+        viewMatrix=viewm,
+        projectionMatrix=projm,
+        shadow=1,
+        flags=p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX,
+        renderer=p.ER_BULLET_HARDWARE_OPENGL)
+
+    # Pack color (drop alpha) and linearize depth.
+    color = np.array(color, dtype=np.uint8).reshape((img_h, img_w, 4))[:, :, :3]
+    zbuffer = np.array(depth).reshape((img_h, img_w))
+    depth = (zfar + znear - (2.0 * zbuffer - 1.0) * (zfar - znear))
+    depth = (2.0 * znear * zfar) / depth
+
+    if cfg['noise']:
+      color = np.uint8(np.clip(np.int32(color) + np.int32(self._random.normal(0, 3, (img_h, img_w, 3))), 0, 255))
+      depth = depth + self._random.normal(0, 0.003, (img_h, img_w))
+
+    segm = np.uint8(segm).reshape((img_h, img_w))
+    return color, depth, segm
+
   @property
   def info(self):
     """Environment info variable with object poses, dimensions, and colors."""
-
-    # Some tasks create and remove zones, so ignore those IDs.
-    # removed_ids = []
-    # if (isinstance(self.task, tasks.names['cloth-flat-notarget']) or
-    #         isinstance(self.task, tasks.names['bag-alone-open'])):
-    #   removed_ids.append(self.task.zone_id)
-
     info = {}  # object id : (position, rotation, dimensions)
     for obj_ids in self.obj_ids.values():
       for obj_id in obj_ids:
@@ -371,6 +452,7 @@ class Environment(gym.Env):
           positionGains=gains)
       p.stepSimulation()
     print(f'Warning: movej exceeded {timeout} second timeout. Skipping.')
+    # assert False, 'movej timed out'
     return True
 
   def movep(self, pose, speed=0.01):
@@ -396,12 +478,17 @@ class Environment(gym.Env):
     return joints
 
   def _get_obs(self):
-    # Get RGB-D camera image observations.
+    # Get RGB-D camera image observations from fixed cameras.
     obs = {'color': (), 'depth': ()}
     for config in self.agent_cams:
       color, depth, _ = self.render_camera(config)
       obs['color'] += (color,)
       obs['depth'] += (depth,)
+
+    # Append wrist camera as an additional stream (same shape as fixed cams).
+    w_color, w_depth, _ = self.render_wrist_camera()
+    obs['color'] += (w_color,)
+    obs['depth'] += (w_depth,)
 
     return obs
 

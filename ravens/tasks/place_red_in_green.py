@@ -32,8 +32,10 @@ class PlaceRedInGreen(Task):
 
   def reset(self, env):
     super().reset(env)
-    n_bowls = np.random.randint(1, 4)
-    n_blocks = np.random.randint(1, n_bowls + 1)
+    # n_bowls = np.random.randint(1, 4)
+    # n_blocks = np.random.randint(1, n_bowls + 1)
+    n_bowls = 1
+    n_blocks = 1
 
     # Add bowls.
     bowl_size = (0.12, 0.12, 0)
@@ -50,6 +52,9 @@ class PlaceRedInGreen(Task):
     block_urdf = 'stacking/block.urdf'
     for _ in range(n_blocks):
       block_pose = self.get_random_pose(env, block_size)
+      # pos, rot = block_pose
+      # rot = np.array([0,0,0,1]) # keep blocks upright
+      # block_pose = (pos, rot)
       block_id = env.add_object(block_urdf, block_pose)
       blocks.append((block_id, (0, None)))
 

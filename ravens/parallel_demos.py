@@ -19,11 +19,14 @@ flags.DEFINE_integer('steps_per_seg', 3, '')
 flags.DEFINE_integer('num_workers', 4, 'Number of parallel environment workers.')
 flags.DEFINE_float('noise', 0.0, 'Action noise standard deviation.')
 flags.DEFINE_bool('debug', False, 'If true, save all episodes including failures.')
+flags.DEFINE_string('exp_name', '', 'Optional experiment name to append to data directory.')
 
 FLAGS = flags.FLAGS
 
 def main(_):
     path = os.path.join(FLAGS.data_dir, f'{FLAGS.task}-{FLAGS.mode}')
+    if FLAGS.exp_name:
+        path += f'-{FLAGS.exp_name}'
     if FLAGS.noise > 0:
         path += f'-noise{FLAGS.noise}'
     if FLAGS.debug:

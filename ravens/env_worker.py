@@ -51,6 +51,7 @@ def run_env_worker(worker_id, task_name, assets_root, mode,
             info = {}
             total_reward = 0
             reward = 0
+            prev_action = np.zeros((8,))
 
             for step in range(max_steps):
                 # print(f'[Worker {worker_id}] Step {step}/{max_steps}')
@@ -65,6 +66,7 @@ def run_env_worker(worker_id, task_name, assets_root, mode,
                     "obj_pose": np.array(obj_pose[0] + obj_pose[1]),
                     "goal_pose": goal_pose,
                     "grasp": grasp,
+                    "prev_action": prev_action,
                 })
                 # print()
                 if noise > 0:
@@ -74,7 +76,11 @@ def run_env_worker(worker_id, task_name, assets_root, mode,
                     act['move_cmd'] = (pos, rot)
                     # act['move_cmd'][0] += np.random.normal(0, noise, size=3)
                     # act['move_cmd'][1] += np.random.normal(0, noise, size=4)
-
+                prev_action = np.concatenate((
+                    act['move_cmd'][0],
+                    act['move_cmd'][1],
+                    np.array([act['suction_cmd']])
+                ))
 
                 episode.append((obs, act, reward, info))
                 obs, reward, done, info = env.step(act)

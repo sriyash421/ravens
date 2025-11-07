@@ -15,8 +15,8 @@ source ${HOME}/.bashrc
 conda activate vpl
 
 ckpt=$1
-python rollout.py \
+python rollout.py --continuous \
     --checkpoint $ckpt \
     --num_episodes 50 \
     --horizon 400 \
-    --video_dir videos/ravens_$2 --continuous $3
+    --video_dir videos/ravens_$2 --exp_name $2

@@ -31,10 +31,17 @@ class Planner(abc.ABC):
   methods.
   """
 
-  def __init__(self, steps_per_seg=2, t_max=10.0, height=0.32):
+  def __init__(self, steps_per_seg=2, t_max=10.0, height=0.32,
+               max_pos_delta=None, max_rot_delta=None):
     self.steps_per_seg = steps_per_seg
     self.t_max = t_max
     self.height = height
+
+    # If provided, these enable adaptive resampling based on spatial/rotational
+    # change limits instead of a fixed number of steps per segment.
+    # Units: meters for position, radians for rotation.
+    self.max_pos_delta = max_pos_delta
+    self.max_rot_delta = max_rot_delta
 
     self.poses = []
     self.rots = None
@@ -70,6 +77,39 @@ class Planner(abc.ABC):
     self._interpolate_rotation()
 
   def _generate_interpolants(self):
+    # If max deltas are provided, adaptively sample each segment so that
+    # consecutive waypoints do not exceed the specified limits.
+    if (self.max_pos_delta is not None) or (self.max_rot_delta is not None):
+      xnew = []
+      n = len(self.times)
+      for i in range(n - 1):
+        # Position change over the segment (linear between keyframes).
+        p0 = np.asarray(self.poses[i][0], dtype=float)
+        p1 = np.asarray(self.poses[i + 1][0], dtype=float)
+        delta_pos = float(np.linalg.norm(p1 - p0))
+
+        steps_pos = 1
+        if (self.max_pos_delta is not None) and (self.max_pos_delta > 0):
+          steps_pos = max(1, int(np.ceil(delta_pos / self.max_pos_delta)))
+
+        # Rotational change over the segment (geodesic angle).
+        steps_rot = 1
+        if (self.max_rot_delta is not None) and (self.max_rot_delta > 0):
+          if self.rots is not None:
+            rel = (self.rots[i].inv() * self.rots[i + 1])
+            angle = float(np.linalg.norm(rel.as_rotvec()))  # radians
+            steps_rot = max(1, int(np.ceil(angle / self.max_rot_delta)))
+
+        steps = max(steps_pos, steps_rot)
+
+        # Generate times for this segment (exclude the right endpoint to avoid duplicates).
+        seg_times = np.linspace(self.times[i], self.times[i + 1], steps, endpoint=False)
+        xnew.extend(seg_times.tolist())
+
+      xnew.append(self.times[-1])
+      return np.array(xnew)
+
+    # Fallback: fixed number of steps per segment.
     xnew = []
     for i in range(len(self.times)):
       if i >= len(self.times) - 1:
@@ -171,7 +211,13 @@ class PickPlacePlanner(Planner):
     """Add suction commands."""
     suction_idxs = [2, 5]
     suction_times = [self.times[i] for i in suction_idxs]
-    suction_loc = [np.argwhere(xnew == s)[0][0] for s in suction_times]
+    # suction_loc = [np.argwhere(xnew == s)[0][0] for s in suction_times]
+    #make suction loc based on float comparison
+    suction_times = np.array(suction_times) # (2,), x_new is also np.array of shape (N,)
+    diffs = np.abs(xnew[:, None] - suction_times[None, :])  # (N, 2)
+    diffs = diffs < 1e-5 # boolean array of shape (N, 2)
+    suction_loc = [np.where(diffs[:, i])[0][0] for i in range(diffs.shape[1])]
+    
     actions = []
     for i, pose in enumerate(poses):
       s = 0

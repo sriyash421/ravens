@@ -184,8 +184,8 @@ class Task():
       pick_i = np.random.choice(order)
       pick_pos = p.getBasePositionAndOrientation(objs[pick_i][0])[0]
 
-      random_x = np.random.uniform(-0.01, 0.01)
-      random_y = np.random.uniform(-0.01, 0.01)
+      random_x = np.random.uniform(-0.005, 0.005)
+      random_y = np.random.uniform(-0.005, 0.005)
       pick_pos = (pick_pos[0] + random_x, pick_pos[1] + random_y, pick_pos[2])
       pick_pose = (np.asarray(pick_pos), np.asarray((0, 0, 0, 1)))
 
@@ -446,7 +446,9 @@ class ContinuousOracle:
     self.steps_per_seg = steps_per_seg
 
     planner_cls = planners.PickPlacePlanner if ee == Suction else planners.PushPlanner
-    self._planner = planner_cls(steps_per_seg, t_max, height)
+    self._planner = planner_cls(steps_per_seg, t_max, height,
+                                max_pos_delta=0.1,
+                                max_rot_delta=np.deg2rad(15))
 
     self._actions = []
 

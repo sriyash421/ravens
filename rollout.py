@@ -28,6 +28,7 @@ import imageio
 from pathlib import Path
 from tqdm import trange
 import cv2
+import wandb
 
 import pybullet as p
 from ravens.environments.environment import Environment, ContinuousEnvironment
@@ -69,8 +70,10 @@ class RavensEvalWrapper:
         self.debug = debug
         self.max_steps = 100
         self.resize_image = resize_image
+        self.task = env.task # Store task for later use
+        self.base_obs = None
 
-    def _pack_obs(self, raw_obs):
+    def _pack_obs(self, raw_obs, action):
         # Camera frames: raw_obs['color'] is (N_cams, H, W, 3) uint8
         side = raw_obs['color'][0]
         wrist = raw_obs['color'][1] if len(raw_obs['color']) > 1 else raw_obs['color'][0]
@@ -106,6 +109,7 @@ class RavensEvalWrapper:
             "goal_pose": goal,
             "_frame": _frame,
             "grasp": grasp,
+            "prev_action": action,
         }
         return obs
     
@@ -125,12 +129,20 @@ class RavensEvalWrapper:
         if self.debug:
             np.random.seed(28)  # fixed seed for debug
         raw_obs = self.env.reset()
+        self.base_obs = raw_obs
         self.obj_id, self.goal_pose = get_obj_id_and_goal(self.env)
         self.elapsed_steps = 0
+        self.prev_action = np.zeros((8,))
         # print("-------- Reset Env -------")
-        return self._pack_obs(raw_obs)
+        return self._pack_obs(raw_obs, np.zeros((8,)))
 
-    def step(self, action_vec):
+    def action_dict2vec(self, action):
+        pos, quat = action['move_cmd']
+        suction = action['suction_cmd']
+        action_vec = np.concatenate((pos, quat, np.array([suction], dtype=np.float32)))
+        return action_vec
+    
+    def step(self, action_vec, acts_left=0):
         """
         action_vec: np.ndarray, shape (>=4,) expected [x, y, z, qw, qx, qy, qz, suction]
         If only [x,y,z,suction] provided, we default quat to [0,0,0,1].
@@ -149,10 +161,11 @@ class RavensEvalWrapper:
         action = {
             "move_cmd": (pos, quat),
             "suction_cmd": int(suction > 0.8),
-            "acts_left": 0,  # dummy
+            "acts_left": acts_left,
         }
         raw_obs, reward, done, info = self.env.step(action)
-        obs = self._pack_obs(raw_obs)
+        self.base_obs = raw_obs
+        obs = self._pack_obs(raw_obs, action_vec)
         info = dict(info or {})
         info["frame"] = obs["_frame"]
 
@@ -164,9 +177,8 @@ class RavensEvalWrapper:
 
 # ---------- Video util ----------
 
-def write_video(frames, actions, out_path, success, fps=5):
-    out_path = str(out_path)
-    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+def write_video(frames, actions, rewards, success, fps=5):
+
     for t in range(len(frames)):
         action = actions[t]
         action_str = ", ".join([f"{a:.2f}" for a in action])
@@ -178,15 +190,21 @@ def write_video(frames, actions, out_path, success, fps=5):
         cv2.putText(frame, action_str, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1, cv2.LINE_AA)
         success_str = "SUCCESS" if success else "FAILURE"
         cv2.putText(frame, success_str, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0) if success else (0, 0, 255), 2, cv2.LINE_AA)
+        reward_str = f"Reward: {rewards[t]:.2f}"
+        cv2.putText(frame, reward_str, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1, cv2.LINE_AA)
         frames[t] = frame
+    return frames
 
+def save_video(frames, out_path, fps=5):
     # frames: list of (H, W, 3) uint8
     imageio.mimwrite(out_path, frames, fps=fps, quality=8)
 
 
+
+
 # ---------- Main rollout ----------
 
-def build_ravens_env(args):
+def build_ravens_env(args, task_mode="test"):
     # Your exact env construction (kept faithful to your snippet)
     env_cls = ContinuousEnvironment if args.continuous else Environment
     env = env_cls(
@@ -196,7 +214,7 @@ def build_ravens_env(args):
         hz=480,
     )
     task = tasks.names[args.task](continuous=args.continuous)
-    task.mode = "test"
+    task.mode = task_mode
     env.set_task(task)
 
     # Compute horizon similarly to your code
@@ -220,7 +238,7 @@ def main():
     parser.add_argument("--assets_root", type=str, default="./ravens/environments/assets")
     parser.add_argument("--task", type=str, default="place-red-in-green")
     parser.add_argument("--continuous", action="store_true")
-    parser.add_argument("--steps_per_seg", type=int, default=3)
+    parser.add_argument("--steps_per_seg", type=int, default=10)
     parser.add_argument("--camera_index", type=int, default=0, help="Which camera to use for saved video frames")
     parser.add_argument("--render", action="store_true")
 
@@ -230,6 +248,7 @@ def main():
     parser.add_argument('--debug', action='store_true', help='If set, enables debug mode')
     parser.add_argument('--pos_only', action='store_true', help='If set, use position-only obs (no quats)')
     parser.add_argument('--resize_image', action='store_true', help='If set, resize images to 224x224')
+    parser.add_argument('--exp_name', type=str, default='ravens-eval', help='WandB experiment name')
     args = parser.parse_args()
 
     # ---- Load training config + init obs utils ----
@@ -254,16 +273,13 @@ def main():
 
     rng = np.random.RandomState(args.seed)
     returns = []
+    lengths = []
     successes = 0
 
-    # check if video dir exists and if it does start evaluation after the last video
-    if args.video_dir:
-        os.makedirs(args.video_dir, exist_ok=True)
-        existing_videos = [f for f in os.listdir(args.video_dir) if f.endswith('.mp4')]
-        start_episode = len(existing_videos)
-        print(f"Resuming evaluation from episode {start_episode} based on existing videos.")
-    else:
-        start_episode = 0
+    # Initialize wandb (always on as requested)
+    wandb.init(project="ravens", config=vars(args))
+
+    # Local video saving is disabled; videos will be logged to wandb.
 
     for ep in trange(args.num_episodes, desc="Evaluating"):
         # per-episode seed for stochastic resets
@@ -273,33 +289,57 @@ def main():
 
         frames = []
         actions = []
+        rewards = []
         ep_ret = 0.0
         done = False
         reward = 0.0
+        length = 0
         for t in range(horizon):
             # The obs dict keys here: side_camera_image, wrist_camera_image, ee_pose, obj_pose, goal_pose
             # Only the keys used by the policy's config will be consumed by the encoder.
-            # breakpoint()
             action = policy(obs)  # numpy action in env space
             obs, reward, done, info = env.step(action)
-            actions.append(np.concatenate((action, np.array(reward).reshape(-1))))  # append reward to action for video overlay
+            actions.append(action)
             ep_ret += reward
             frames.append(info["frame"])
+            rewards.append(reward)
+            length += 1
             if done:
                 break
 
         returns.append(ep_ret)
+        lengths.append(length)
         # Simple Ravens success heuristic (adjust to your task spec):
         succ = float(ep_ret > 0.99)
         successes += int(succ)
 
-        if args.video_dir:
-            out_path = Path(args.video_dir) / f"ep_{ep:03d}.mp4"
-            write_video(frames, actions, out_path, bool(succ > 0.99), fps=args.fps)
+        # Save/upload per-episode video either locally or to wandb (or both)
+        episodes_done = len(returns)
+        running_succ_rate = successes / float(max(1, episodes_done))
+        avg_return_so_far = float(np.mean(returns)) if returns else 0.0
+        avg_length_so_far = float(np.mean(lengths)) if lengths else 0.0
+
+        # Log video and running metrics to wandb
+        video_np = np.stack(frames, axis=0)  # (T, H, W, 3)
+        video_np = write_video(video_np, actions, rewards, succ > 0.5, fps=args.fps)
+        wandb.log({
+            f"video": wandb.Video(video_np.transpose(0, 3, 1, 2), fps=args.fps, format="mp4"),
+            "success_rate": running_succ_rate,
+            "avg_return": avg_return_so_far,
+            "avg_length": avg_length_so_far,
+            "episode_return": ep_ret,
+            "episode_success": succ,
+        }, step=ep)
 
     avg_return = float(np.mean(returns)) if returns else 0.0
+    avg_length = float(np.mean(lengths)) if lengths else 0.0
     succ_rate = successes / max(1, args.num_episodes)
-    print(f"\nDone. Episodes: {args.num_episodes} | Avg return: {avg_return:.3f} | Success rate: {succ_rate:.3f}")
+    print(f"\nDone. Episodes: {args.num_episodes} | Avg return: {avg_return:.3f} | Avg length: {avg_length:.3f} | Success rate: {succ_rate:.3f}")
+
+    # Final summary
+    wandb.summary["final/avg_return"] = avg_return
+    wandb.summary["final/avg_length"] = avg_length
+    wandb.summary["final/success_rate"] = succ_rate
 
 if __name__ == "__main__":
     main()

@@ -72,6 +72,8 @@ def create_robomimic_hdf5(parent_dir, output_hdf5, resize_to_224=False):
             goal_pose = np.asarray([s["goal_pose"] for s in infos], dtype=np.float32)  # (T, 7)
             obj_pose  = np.asarray([s["obj_pose"]  for s in infos], dtype=np.float32)  # (T, 7)
             grasp     = np.asarray([s["grasp"]     for s in infos], dtype=np.float32).reshape(T, 1)  # (T,1)
+            prev_action = np.asarray([s["prev_action"] for s in infos], dtype=np.float32)  # (T, 8)
+            expert_mask = np.ones((T,1), dtype=np.float32)  # (T,1) all ones for expert data
 
             # Actions: [x,y,z, qw,qx,qy,qz, suction]  -> (T, 8)
             actions = np.asarray([
@@ -98,10 +100,12 @@ def create_robomimic_hdf5(parent_dir, output_hdf5, resize_to_224=False):
             g_obs.create_dataset("goal_pose",          data=goal_pose,  dtype=np.float32)
             g_obs.create_dataset("obj_pose",           data=obj_pose,   dtype=np.float32)
             g_obs.create_dataset("grasp",              data=grasp,      dtype=np.float32)
+            g_obs.create_dataset("prev_action",       data=prev_action,dtype=np.float32)
 
             g_ep.create_dataset("actions", data=actions, dtype=np.float32)
             g_ep.create_dataset("rewards", data=rewards, dtype=np.float32)
             g_ep.create_dataset("dones",   data=dones,   dtype=bool)
+            g_ep.create_dataset("expert_mask",       data=expert_mask,dtype=np.float32)
 
             if total_samples < 1:
                 # print shapes
@@ -112,9 +116,11 @@ def create_robomimic_hdf5(parent_dir, output_hdf5, resize_to_224=False):
                 print(f"  obs/goal_pose:          {goal_pose.shape} float32")
                 print(f"  obs/obj_pose:           {obj_pose.shape} float32")
                 print(f"  obs/grasp:              {grasp.shape} float32")
+                print(f"  obs/prev_action:        {prev_action.shape} float32")
                 print(f"  actions:                {actions.shape} float32")
                 print(f"  rewards:                {rewards.shape} float32")
                 print(f"  dones:                  {dones.shape} bool")
+                print(f"  expert_mask:            {expert_mask.shape} float32")
 
             total_samples += T
 

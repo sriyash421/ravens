@@ -141,9 +141,45 @@ The MDP formulation for each task uses transitions with the following structure:
 ## Sriyash Commands
 
 
+### Debug
+```
+python ravens/parallel_demos.py --assets_root=./ravens/environments/assets/ --task=place-red-in-green  --mode=train --n=10 --continuous --steps_per_seg 10 --num_workers 4 --noise 0.001
+```
 
 ### Generate data
 
 ```
-python ravens/parallel_demos.py --assets_root=./ravens/environments/assets/ --task=place-red-in-green  --mode=train --n=1000 --continuous --steps_per_seg 10 --num_workers 100 --noise 0.001
+python ravens/parallel_demos.py --assets_root=./ravens/environments/assets/ --task=place-red-in-green  --mode=train --n=2000 --continuous --steps_per_seg 10 --num_workers 100 --noise 0.001
+```
+
+### Convert to hdf5
+
+```
+python create_hdf5.py --parent_dir place-red-in-green-noise0.001 --output dataset.hdf5
+```
+
+### Get videos from hdf5
+
+```
+python viz_video.py --hdf5 dataset.hdf5 --out_dir dataset_videos --max_videos 10 --gif
+```
+
+### Train dit policy from both images
+
+```
+python ../robomimic/robomimic/scripts/train.py \
+    --config ../robomimic/robomimic/exps/dit_ravens_all_pretrained.json \
+    --name dit_pretrained_all_images \
+    --dataset dataset.hdf5
+```
+
+### Evaluate dit policy
+
+```
+ckpt=../robomimic/dit_policy_trained_models/dit_pretrained_all_images/20251104014441/last.pth
+python rollout.py \
+    --checkpoint $ckpt \
+    --num_episodes 50 \
+    --horizon 400 \
+    --video_dir videos/ravens_dit_pretrained --continuous
 ```

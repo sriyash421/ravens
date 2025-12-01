@@ -118,32 +118,27 @@ class EnvStackWrapper():
         """Info to pretty print."""
         return "num_frames={}".format(self.num_frames)
 
-# def write_video(frames, actions, rewards, expert_masks, success, fps=5):
+def write_video(frames, actions, rewards, expert_masks, success, fps=5):
 
-#     for t in range(len(frames)):
-#         action = actions[t]
-#         action_str = ", ".join([f"{a:.2f}" for a in action])
-#         frame = frames[t]
-#         frame = np.ascontiguousarray(frame).copy()
-#         frame = frame.astype(np.uint8)
-#         # print(frames[t])
-#         # breakpoint()
-#         cv2.putText(frame, action_str, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1, cv2.LINE_AA)
-#         success_str = "SUCCESS" if success else "FAILURE"
-#         cv2.putText(frame, success_str, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0) if success else (0, 0, 255), 1, cv2.LINE_AA)
-#         reward_str = f"Reward: {rewards[t]:.2f}"
-#         cv2.putText(frame, reward_str, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
-#         expert_str = "EXPERT" if expert_masks[t] else "POLICY"
-#         cv2.putText(frame, expert_str, (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA)
-#         frames[t] = frame
-#         # add timestep
-#         cv2.putText(frame, f"Timestep: {t}", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
-#     return frames
-
-
-# @timeout_decorator.timeout(5, timeout_exception=StopIteration)
-def step_call(env, action, acts_left):
-    return env.step(action, acts_left=acts_left)
+    for t in range(len(frames)):
+        action = actions[t]
+        action_str = ", ".join([f"{a:.2f}" for a in action])
+        frame = frames[t]
+        frame = np.ascontiguousarray(frame).copy()
+        frame = frame.astype(np.uint8)
+        # print(frames[t])
+        # breakpoint()
+        cv2.putText(frame, action_str, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1, cv2.LINE_AA)
+        success_str = "SUCCESS" if success else "FAILURE"
+        cv2.putText(frame, success_str, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0) if success else (0, 0, 255), 1, cv2.LINE_AA)
+        reward_str = f"Reward: {rewards[t]:.2f}"
+        cv2.putText(frame, reward_str, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
+        expert_str = "EXPERT" if expert_masks[t] else "POLICY"
+        cv2.putText(frame, expert_str, (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA)
+        frames[t] = frame
+        # add timestep
+        cv2.putText(frame, f"Timestep: {t}", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
+    return frames
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate a robomimic policy in Ravens (PyBullet).")
@@ -197,6 +192,7 @@ def main():
     horizon = args.horizon if args.horizon > 0 else env_horizon
     # env = EnvUtils.wrap_env_from_config(env, config)
     rng = np.random.RandomState(args.seed)
+    # np.random.seed(args.seed)
     returns = []
     successes = 0
 
@@ -215,6 +211,7 @@ def main():
 
     pbar = trange(args.num_episodes, desc="Generating DAgger Data")
     ep = 0
+    total_ep = 0
     while not data_collector.is_stopped():
         # per-episode seed for stochastic resets
         seed = int(rng.randint(0, 2**31 - 1))
@@ -223,6 +220,7 @@ def main():
         expert_obs = expert_obs_manager.reset(obs)
         policy.start_episode()  # sets eval mode, clears hidden state if any
         expert_policy.start_episode()
+        data_collector.reset()
 
         frames = []
         actions = []
@@ -231,6 +229,8 @@ def main():
         ep_ret = 0.0
         done = False
         reward = 0.0
+        succ = 0.0
+
         for t in range(horizon):
             # The obs dict keys here: side_camera_image, wrist_camera_image, ee_pose, obj_pose, goal_pose
             # Only the keys used by the policy's config will be consumed by the encoder.
@@ -256,23 +256,18 @@ def main():
                 for k,v in obs.items():
                     data_collector.add(f"obs/{k}", v[None])
                 data_collector.add("actions", action[None])
-                data_collector.add("expert_action_mask", np.array([expert_mask], dtype=np.uint8))
+                data_collector.add("expert_mask", np.array([expert_mask], dtype=np.uint8))
+
+                obs, reward, done, info = env.step(action, acts_left=acts_left)
                 data_collector.add("rewards", np.array([reward], dtype=np.float32))
                 data_collector.add("dones", np.array([done], dtype=np.uint8))
-
-                obs, reward, done, info = step_call(env, action, acts_left)
                 actions.append(np.concatenate((action, np.array(reward).reshape(-1))))  # append reward to action for video overlay
                 ep_ret += reward
                 expert_obs = expert_obs_manager.step(obs)
 
-                frame = info['frame']
-
                 rewards.append(reward)
                 expert_masks.append(expert_mask)
-                frames.append(frame)
-                
-                if ep_ret > 0.99:
-                    done = True
+                frames.append(info['frame'])
 
                 # if expert_mask:
                 #     done = done and (acts_left == 1)
@@ -298,8 +293,11 @@ def main():
         # avg_return_so_far = float(np.mean(returns)) if returns else 0.0
 
         # # Log video and running metrics to wandb
-        # video_np = np.stack(frames, axis=0)  # (T, H, W, 3)
-        # video_np = write_video(video_np, actions, rewards, expert_masks, succ)
+        if args.debug:
+            video_np = np.stack(frames, axis=0)  # (T, H, W, 3)
+            video_np = write_video(video_np, actions, rewards, expert_masks, succ)
+            os.makedirs("videos/debug_dagger_videos", exist_ok=True)
+            imageio.mimwrite(f"videos/debug_dagger_videos/totalep_{total_ep:03d}_ep{ep:03d}_succ{succ:.0f}.mp4", video_np, fps=5, quality=8)
         # wandb.log({
         #     # f"video/ep_{ep:03d}": wandb.Video(video_np.transpose(0, 3, 1, 2), fps=10, format="mp4"),
         #     "success_rate": running_succ_rate,
@@ -309,10 +307,13 @@ def main():
         # }, step=ep)
         # ep += 1
         # imageio.mimwrite(f"debug_dagger_videos/ep_{ep:03d}.mp4", video_np, fps=5, quality=8)
-
-        if succ or args.debug:
+        total_ep += 1
+        if succ:
             data_collector.flush()
             pbar.update(1)
+            ep += 1
+        else:
+            data_collector.reset()
 
     avg_return = float(np.mean(returns)) if returns else 0.0
     succ_rate = successes / max(1, args.num_episodes)

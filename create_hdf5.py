@@ -73,7 +73,7 @@ def create_robomimic_hdf5(parent_dir, output_hdf5, resize_to_224=False):
             obj_pose  = np.asarray([s["obj_pose"]  for s in infos], dtype=np.float32)  # (T, 7)
             grasp     = np.asarray([s["grasp"]     for s in infos], dtype=np.float32).reshape(T, 1)  # (T,1)
             prev_action = np.asarray([s["prev_action"] for s in infos], dtype=np.float32)  # (T, 8)
-            expert_mask = np.ones((T,1), dtype=np.float32)  # (T,1) all ones for expert data
+            expert_mask = np.ones((T,), dtype=np.float32)  # (T,) all ones for expert data
 
             # Actions: [x,y,z, qw,qx,qy,qz, suction]  -> (T, 8)
             actions = np.asarray([

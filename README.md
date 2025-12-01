@@ -143,7 +143,7 @@ The MDP formulation for each task uses transitions with the following structure:
 
 ### Debug
 ```
-python ravens/parallel_demos.py --assets_root=./ravens/environments/assets/ --task=place-red-in-green  --mode=train --n=10 --continuous --steps_per_seg 10 --num_workers 4 --noise 0.001
+python ravens/ravens/parallel_demos.py --assets_root=./ravens/ravens/environments/assets/ --task=place-red-in-green  --mode=train --n=10 --continuous --steps_per_seg 10 --num_workers 4 --noise 0.001 --exp_name step0.05_debug
 ```
 
 ### Generate data

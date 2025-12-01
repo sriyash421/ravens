@@ -12,7 +12,7 @@ Example:
     --checkpoint /path/to/policy_epoch_050.pth \
     --config /path/to/training_config.json \
     --num_episodes 10 \
-    --video_dir ./videos \
+    --exp_name ravens-eval \
     --task place-red-in-green \
     --assets_root ./ravens/environments/assets \
     --continuous \
@@ -41,7 +41,11 @@ import robomimic.utils.obs_utils as ObsUtils
 import robomimic.utils.torch_utils as TorchUtils
 import robomimic.utils.env_utils as EnvUtils
 # import robomimic.envs.env_base as EB
+import timeout_decorator
 
+@timeout_decorator.timeout(5, timeout_exception=StopIteration)
+def step_call(env, action):
+    return env.step(action)
 # ---------- Minimal Ravens -> robomimic observation adapter ----------
 
 def get_obj_id_and_goal(env):
@@ -120,14 +124,15 @@ class RavensEvalWrapper:
         dist = np.linalg.norm(goal_pos - obj_pos)
         height = obs['obj_pose'][2]
         grasp = self.env.ee.check_grasp()
+        ee_pose = obs['ee_pose']
         # print(f"Distance to goal: {dist:.4f}, Height: {height:.4f}, Grasp: {grasp}")
-        return float(dist < 0.05 and height < 0.04 and not grasp)
+        return float(dist < 0.05 and height < 0.04 and not grasp and ee_pose[2] > 0.1)
 
-    def reset(self, seed=None):
+    def reset(self):
         # if seed is not None:
             # np.random.seed(seed)
-        if self.debug:
-            np.random.seed(28)  # fixed seed for debug
+        # if self.debug:
+        #     np.random.seed(28)  # fixed seed for debug
         raw_obs = self.env.reset()
         self.base_obs = raw_obs
         self.obj_id, self.goal_pose = get_obj_id_and_goal(self.env)
@@ -163,7 +168,15 @@ class RavensEvalWrapper:
             "suction_cmd": int(suction > 0.8),
             "acts_left": acts_left,
         }
-        raw_obs, reward, done, info = self.env.step(action)
+        # raw_obs, reward, done, info = self.env.step(action)
+        try:
+            raw_obs, reward, done, info = step_call(self.env, action)
+        except StopIteration:
+            print("Step timed out! Returning zero reward and done=True")
+            raw_obs = self.base_obs
+            reward = 0.0
+            done = True
+            info = {}
         self.base_obs = raw_obs
         obs = self._pack_obs(raw_obs, action_vec)
         info = dict(info or {})
@@ -243,12 +256,12 @@ def main():
     parser.add_argument("--render", action="store_true")
 
     # Output
-    parser.add_argument("--video_dir", type=str, default="", help="If set, saves per-episode mp4s here")
+    parser.add_argument("--exp_name", type=str, default="ravens-eval")
     parser.add_argument("--fps", type=int, default=5)
     parser.add_argument('--debug', action='store_true', help='If set, enables debug mode')
     parser.add_argument('--pos_only', action='store_true', help='If set, use position-only obs (no quats)')
     parser.add_argument('--resize_image', action='store_true', help='If set, resize images to 224x224')
-    parser.add_argument('--exp_name', type=str, default='ravens-eval', help='WandB experiment name')
+    parser.add_argument('--wandb_project', type=str, default='', help='WandB experiment name')
     args = parser.parse_args()
 
     # ---- Load training config + init obs utils ----
@@ -277,9 +290,8 @@ def main():
     successes = 0
 
     # Initialize wandb (always on as requested)
-    wandb.init(project="ravens", config=vars(args))
-
-    # Local video saving is disabled; videos will be logged to wandb.
+    project_name = args.wandb_project if args.wandb_project else "ravens-dec-dagger"
+    wandb.init(project=project_name, config=vars(args))
 
     for ep in trange(args.num_episodes, desc="Evaluating"):
         # per-episode seed for stochastic resets
@@ -322,8 +334,10 @@ def main():
         # Log video and running metrics to wandb
         video_np = np.stack(frames, axis=0)  # (T, H, W, 3)
         video_np = write_video(video_np, actions, rewards, succ > 0.5, fps=args.fps)
+        save_video(video_np, os.path.join("/tmp", f"{args.exp_name}_episode_{ep:04d}.mp4"), fps=args.fps) if args.exp_name else None
+        video_path = os.path.join("/tmp", f"{args.exp_name}_episode_{ep:04d}.mp4")
         wandb.log({
-            f"video": wandb.Video(video_np.transpose(0, 3, 1, 2), fps=args.fps, format="mp4"),
+            f"video": wandb.Video(video_path),
             "success_rate": running_succ_rate,
             "avg_return": avg_return_so_far,
             "avg_length": avg_length_so_far,

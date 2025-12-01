@@ -447,8 +447,8 @@ class ContinuousOracle:
 
     planner_cls = planners.PickPlacePlanner if ee == Suction else planners.PushPlanner
     self._planner = planner_cls(steps_per_seg, t_max, height,
-                                max_pos_delta=0.1,
-                                max_rot_delta=np.deg2rad(15))
+                                max_pos_delta=0.05,
+                                max_rot_delta=np.deg2rad(10))
 
     self._actions = []
 

@@ -102,9 +102,9 @@ class RavensEvalWrapper:
             side = cv2.resize(side, (224, 224), interpolation=cv2.INTER_AREA)
             wrist = cv2.resize(wrist, (224, 224), interpolation=cv2.INTER_AREA)
 
-        im1 = raw_obs['color'][0]
-        im2 = raw_obs['color'][1] # T, H, W, 3
-        _frame = np.concatenate((im1, im2), axis=1)
+        # im1 = raw_obs['color'][0]
+        # im2 = raw_obs['color'][1] # T, H, W, 3
+        _frame = np.concatenate([im for im in raw_obs['color']], axis=1)
         obs = {
             "side_camera_image": side,
             "wrist_camera_image": wrist,

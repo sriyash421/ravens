@@ -414,12 +414,13 @@ class Environment(gym.Env):
   def info(self):
     """Environment info variable with object poses, dimensions, and colors."""
     info = {}  # object id : (position, rotation, dimensions)
-    for obj_ids in self.obj_ids.values():
-      for obj_id in obj_ids:
-        pos, rot = p.getBasePositionAndOrientation(obj_id)
-        dim = p.getVisualShapeData(obj_id)[0][3]
-        info[obj_id] = (pos, rot, dim)
-    return info
+    return {}
+    # for obj_ids in self.obj_ids.values():
+    #   for obj_id in obj_ids:
+    #     pos, rot = p.getBasePositionAndOrientation(obj_id)
+    #     dim = p.getVisualShapeData(obj_id)[0][3]
+    #     info[obj_id] = (pos, rot, dim)
+    # return info
 
   def set_task(self, task):
     task.set_assets_root(self.assets_root)

@@ -66,7 +66,7 @@ class Task():
 
     self.assets_root = None
 
-  def reset(self, env):  # pylint: disable=unused-argument
+  def reset(self, env, hard_reset=False):  # pylint: disable=unused-argument
     if not self.assets_root:
       raise ValueError('assets_root must be set for task, '
                        'call set_assets_root().')
@@ -183,10 +183,13 @@ class Task():
       # 
       pick_i = np.random.choice(order)
       pick_pos = p.getBasePositionAndOrientation(objs[pick_i][0])[0]
-
       random_x = np.random.uniform(-0.005, 0.005)
       random_y = np.random.uniform(-0.005, 0.005)
       pick_pos = (pick_pos[0] + random_x, pick_pos[1] + random_y, pick_pos[2])
+      pix = utils.xyz_to_pix(pick_pos, self.bounds, self.pix_size)
+      pix = (pix[0], pix[1])  # (row, col)
+      pick_pos = utils.pix_to_xyz(pix, hmap,
+                                  self.bounds, self.pix_size)
       pick_pose = (np.asarray(pick_pos), np.asarray((0, 0, 0, 1)))
 
       # Get placing pose.
